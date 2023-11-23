@@ -1,0 +1,100 @@
+include:
+  - local: 'deploy_common.yml'
+
+stages:
+  - test
+  - build
+  - e2e
+  - deploy
+
+variables:
+  FRONTEND_IMAGE: $CI_REGISTRY_IMAGE/frontend
+  BACKEND_IMAGE: $CI_REGISTRY_IMAGE/node-api
+  SERVER_PROD_IP: 141.94.245.67
+  SERVER_STAGING_IP: 141.95.149.180
+  SERVER_PROD_USER: root
+  SERVER_STAGING_USER: root
+
+.container_registry: &container_registry
+  image: docker
+  services:
+    - docker:dind
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login $CI_REGISTRY --username container-registry-rw --password-stdin
+
+test_frontend:
+  image: node:lts-bullseye
+  stage: test
+  cache:
+    key:
+      files:
+        - 'frontend/package-lock.json'
+    paths:
+      - frontend/node_modules
+      - frontend/.npm
+  script:
+    - cd frontend
+    - npm ci --cache .npm --prefer-offline
+    - npm run lint
+    - npm audit
+
+test_backend:
+  image: node:lts-bullseye
+  stage: test
+  cache:
+    key:
+      files:
+        - 'node-api/package-lock.json'
+    paths:
+      - node-api/node_modules
+      - node-api/.npm
+  script:
+    - cd node-api
+    - npm ci --cache .npm --prefer-offline
+    - npm run lint
+    - npm audit
+    - npm run test:ci
+  coverage: '/All files[^|]*\|[^|]*\s+([\d\.]+)/'
+
+build_frontend:
+  stage: build
+  <<: *container_registry
+  script:
+    - cd frontend
+    - docker pull $FRONTEND_IMAGE:latest || true
+    - docker build --cache-from $FRONTEND_IMAGE:latest -t $FRONTEND_IMAGE:$CI_COMMIT_SHORT_SHA -t $FRONTEND_IMAGE:latest .
+    - docker push $FRONTEND_IMAGE --all-tags
+
+build_backend:
+  stage: build
+  <<: *container_registry
+  script:
+    - cd node-api
+    - docker pull $BACKEND_IMAGE:latest || true
+    - docker build --cache-from $BACKEND_IMAGE:latest -t $BACKEND_IMAGE:$CI_COMMIT_SHORT_SHA -t $BACKEND_IMAGE:latest .
+    - docker push $BACKEND_IMAGE --all-tags
+
+test_e2e:
+  stage: e2e
+  <<: *container_registry
+  script:
+    - docker compose up --exit-code-from cypress --abort-on-container-exit
+  after_script:
+    - docker compose down -v --remove-orphans
+
+deploy_staging:
+  extends: .deploy_common
+  variables:
+    ENV_NAME: staging
+    SERVER_IP: $SERVER_STAGING_IP
+    SERVER_USER: $SERVER_STAGING_USER
+    GITLAB_KEY: $GITLAB_KEY_STAGING
+
+deploy:
+  extends: .deploy_common
+  when: manual
+  variables:
+    ENV_NAME: production
+    SERVER_IP: $SERVER_PROD_IP
+    SERVER_USER: $SERVER_PROD_USER
+    GITLAB_KEY: $GITLAB_KEY_PRODUCTION
