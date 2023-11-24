@@ -2,6 +2,7 @@ version: '3.9'
 services:
   node-api:
     image: $BACKEND_IMAGE
+    pull_policy: always
     environment:
       NODE_ENV: production
     deploy:
@@ -13,6 +14,7 @@ services:
         condition: on-failure
   frontend:
     image: $FRONTEND_IMAGE
+    pull_policy: always
     ports:
       - target: 80
         published: 80
